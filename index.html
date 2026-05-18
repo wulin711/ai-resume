@@ -1,0 +1,736 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<meta name="description" content="AI简历优化 - 根据目标职位描述智能分析和优化您的简历，提升面试机会">
+<title>AI简历优化 - 职位匹配修改</title>
+<script src="https://cdn.tailwindcss.com"></script>
+<script src="https://cdn.jsdelivr.net/npm/pdfjs-dist@3.11.174/build/pdf.min.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/mammoth@1.6.0/mammoth.browser.min.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.0/dist/chart.umd.min.js"></script>
+<script>
+pdfjsLib.GlobalWorkerOptions.workerSrc = 'https://cdn.jsdelivr.net/npm/pdfjs-dist@3.11.174/build/pdf.worker.min.js';
+</script>
+<style>
+  * { box-sizing: border-box; }
+  body { font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, "PingFang SC", "Microsoft YaHei", sans-serif; }
+
+  .fade-in { animation: fadeIn 0.4s ease-out; }
+  @keyframes fadeIn { from { opacity: 0; transform: translateY(12px); } to { opacity: 1; transform: translateY(0); } }
+
+  .pulse-dot { animation: pulse 1.5s ease-in-out infinite; }
+  @keyframes pulse { 0%, 100% { opacity: 1; } 50% { opacity: 0.3; } }
+
+  .paywall-blur {
+    position: relative;
+    overflow: hidden;
+    filter: blur(6px);
+    user-select: none;
+    pointer-events: none;
+    max-height: 140px;
+    transition: all 0.3s ease;
+  }
+  .paywall-blur.unlocked {
+    filter: none;
+    max-height: none;
+    user-select: auto;
+    pointer-events: auto;
+  }
+
+  .paywall-overlay {
+    position: absolute;
+    inset: 0;
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    justify-content: center;
+    background: rgba(255,255,255,0.6);
+    backdrop-filter: blur(2px);
+    z-index: 10;
+    cursor: pointer;
+    transition: opacity 0.3s ease;
+  }
+  .paywall-overlay.hidden { opacity: 0; pointer-events: none; }
+
+  .drop-zone {
+    border: 2px dashed #d1d5db;
+    transition: all 0.2s ease;
+  }
+  .drop-zone:hover, .drop-zone.drag-over {
+    border-color: #6366f1;
+    background: #eef2ff;
+  }
+
+  .score-ring {
+    transform: rotate(-90deg);
+  }
+  .score-ring circle {
+    transition: stroke-dashoffset 1s ease-out;
+  }
+
+  .section-card {
+    border: 1px solid #e5e7eb;
+    border-radius: 12px;
+    padding: 1.25rem;
+    margin-bottom: 1rem;
+    background: #fff;
+  }
+
+  .tag { display: inline-block; padding: 0.2rem 0.6rem; border-radius: 9999px; font-size: 0.75rem; font-weight: 500; margin: 0.15rem; }
+  .tag-match { background: #d1fae5; color: #065f46; }
+  .tag-miss { background: #fee2e2; color: #991b1b; }
+
+  .gap-severity-high { border-left: 3px solid #ef4444; }
+  .gap-severity-medium { border-left: 3px solid #f59e0b; }
+  .gap-severity-low { border-left: 3px solid #3b82f6; }
+
+  .btn-primary {
+    background: linear-gradient(135deg, #6366f1, #8b5cf6);
+    color: #fff;
+    padding: 0.75rem 2rem;
+    border-radius: 9999px;
+    font-weight: 600;
+    border: none;
+    cursor: pointer;
+    transition: all 0.2s ease;
+  }
+  .btn-primary:hover { transform: translateY(-1px); box-shadow: 0 4px 12px rgba(99,102,241,0.4); }
+  .btn-primary:disabled { opacity: 0.5; cursor: not-allowed; transform: none; box-shadow: none; }
+
+  .btn-secondary {
+    background: #fff;
+    color: #6366f1;
+    padding: 0.6rem 1.5rem;
+    border-radius: 9999px;
+    font-weight: 600;
+    border: 2px solid #6366f1;
+    cursor: pointer;
+    transition: all 0.2s ease;
+  }
+  .btn-secondary:hover { background: #eef2ff; }
+
+  @media print {
+    body * { visibility: hidden; }
+    #print-area, #print-area * { visibility: visible; }
+    #print-area { position: absolute; left: 0; top: 0; width: 210mm; padding: 20mm; }
+  }
+</style>
+</head>
+<body class="bg-gray-50 min-h-screen">
+
+<!-- Header -->
+<header class="bg-white border-b border-gray-100 sticky top-0 z-30">
+  <div class="max-w-3xl mx-auto px-4 py-3 flex items-center justify-between">
+    <div class="flex items-center gap-2">
+      <div class="w-8 h-8 rounded-lg bg-gradient-to-br from-indigo-500 to-purple-600 flex items-center justify-center text-white font-bold text-sm">AI</div>
+      <div>
+        <h1 class="text-base font-bold text-gray-800">AI简历优化</h1>
+        <p class="text-xs text-gray-400">职位匹配 · 智能改写</p>
+      </div>
+    </div>
+    <button onclick="resetApp()" class="text-sm text-gray-500 hover:text-gray-700 hidden" id="btn-new">新分析</button>
+  </div>
+</header>
+
+<!-- Main Content -->
+<main class="max-w-3xl mx-auto px-4 py-6" id="app">
+  <!-- Screen: Upload -->
+  <div id="screen-upload" class="fade-in"></div>
+  <!-- Screen: Loading -->
+  <div id="screen-loading" class="fade-in hidden"></div>
+  <!-- Screen: Results -->
+  <div id="screen-results" class="fade-in hidden"></div>
+</main>
+
+<!-- Payment Modal -->
+<div id="payment-modal" class="hidden fixed inset-0 z-50 flex items-center justify-center p-4">
+  <div class="absolute inset-0 bg-black/50" onclick="closePaymentModal()"></div>
+  <div class="relative bg-white rounded-2xl w-full max-w-sm p-6 shadow-2xl fade-in">
+    <button onclick="closePaymentModal()" class="absolute top-3 right-3 text-gray-400 hover:text-gray-600 text-xl">&times;</button>
+    <h3 class="text-lg font-bold text-gray-800 mb-2">解锁完整报告</h3>
+    <p class="text-sm text-gray-500 mb-4">支付 ¥9.9 即可查看全部改写建议并下载优化简历</p>
+
+    <div class="bg-gray-50 rounded-xl p-4 mb-4">
+      <div class="text-3xl font-bold text-center text-indigo-600 mb-1">¥9.9</div>
+      <p class="text-xs text-center text-gray-400 mb-3">一次购买，永久有效</p>
+      <div class="text-sm text-gray-600 space-y-1">
+        <div class="flex items-center gap-2"><span class="text-green-500">✓</span> 完整匹配度分析报告</div>
+        <div class="flex items-center gap-2"><span class="text-green-500">✓</span> 逐模块AI优化改写</div>
+        <div class="flex items-center gap-2"><span class="text-green-500">✓</span> 下载优化后新简历</div>
+      </div>
+    </div>
+
+    <div class="bg-indigo-50 rounded-xl p-3 mb-4 text-center">
+      <p class="text-xs text-indigo-700 mb-2">扫码支付后输入验证码即可解锁</p>
+      <div class="w-32 h-32 mx-auto bg-white rounded-lg flex items-center justify-center text-xs text-gray-400 border">
+        <!-- 替换为实际二维码 -->
+        <span id="qr-placeholder">面包多收款二维码</span>
+      </div>
+    </div>
+
+    <div class="flex gap-2">
+      <input type="text" id="code-input" placeholder="输入验证码" maxlength="12"
+        class="flex-1 border border-gray-300 rounded-lg px-3 py-2 text-sm uppercase tracking-wider text-center focus:outline-none focus:border-indigo-500"
+        oninput="this.value=this.value.replace(/[^a-zA-Z0-9]/g,'')">
+      <button onclick="verifyCode()" class="btn-primary text-sm px-4 py-2" id="btn-verify">验证解锁</button>
+    </div>
+    <p id="code-error" class="text-red-500 text-xs mt-2 hidden"></p>
+  </div>
+</div>
+
+<!-- Footer -->
+<footer class="text-center py-6 text-xs text-gray-400">
+  <p>Powered by AI · 简历内容仅用于分析，不作存储</p>
+</footer>
+
+<script>
+// ============ STATE ============
+const state = {
+  screen: 'upload',
+  resumeFile: null,
+  resumeText: null,
+  jdText: '',
+  jobTitle: '',
+  analysis: null,
+  unlocked: false,
+  verifiedCode: null,
+  error: null,
+};
+
+// ============ FILE PARSING ============
+async function parsePDF(file) {
+  const buf = await file.arrayBuffer();
+  const pdf = await pdfjsLib.getDocument({ data: buf }).promise;
+  let text = '';
+  for (let i = 1; i <= pdf.numPages; i++) {
+    const page = await pdf.getPage(i);
+    const content = await page.getTextContent();
+    text += content.items.map(it => it.str).join(' ') + '\n';
+  }
+  return text.trim();
+}
+
+async function parseWord(file) {
+  const buf = await file.arrayBuffer();
+  const result = await mammoth.extractRawText({ arrayBuffer: buf });
+  return result.value.trim();
+}
+
+async function parseFile(file) {
+  const ext = file.name.split('.').pop().toLowerCase();
+  if (ext === 'pdf') return parsePDF(file);
+  if (ext === 'docx' || ext === 'doc') return parseWord(file);
+  throw new Error('不支持的文件格式，请上传PDF或Word文档');
+}
+
+// ============ API ============
+async function analyzeResume() {
+  const res = await fetch('/api/analyze', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({
+      resume_text: state.resumeText,
+      jd_text: state.jdText,
+      job_title: state.jobTitle,
+    }),
+    signal: AbortSignal.timeout(55000),
+  });
+  const data = await res.json();
+  if (!data.success) throw new Error(data.error || '分析失败');
+  return data.data;
+}
+
+async function verifyCodeAPI(code) {
+  const res = await fetch('/api/verify-code', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ code }),
+  });
+  return res.json();
+}
+
+// ============ NAVIGATION ============
+function setScreen(screen) {
+  state.screen = screen;
+  document.getElementById('screen-upload').classList.add('hidden');
+  document.getElementById('screen-loading').classList.add('hidden');
+  document.getElementById('screen-results').classList.add('hidden');
+  document.getElementById('btn-new').classList.add('hidden');
+
+  switch (screen) {
+    case 'upload': renderUpload(); break;
+    case 'loading': renderLoading(); break;
+    case 'preview':
+    case 'unlocked':
+      renderResults();
+      document.getElementById('btn-new').classList.remove('hidden');
+      break;
+  }
+  window.scrollTo({ top: 0, behavior: 'smooth' });
+}
+
+function resetApp() {
+  Object.assign(state, {
+    screen: 'upload', resumeFile: null, resumeText: null,
+    jdText: '', jobTitle: '', analysis: null, unlocked: false,
+    verifiedCode: null, error: null,
+  });
+  setScreen('upload');
+}
+
+// ============ RENDER: UPLOAD ============
+function renderUpload() {
+  const el = document.getElementById('screen-upload');
+  el.classList.remove('hidden');
+  el.innerHTML = `
+    <div class="text-center mb-6">
+      <h2 class="text-2xl font-bold text-gray-800 mb-2">AI简历优化</h2>
+      <p class="text-gray-500 text-sm">根据目标职位，智能分析和优化您的简历</p>
+    </div>
+
+    <div class="bg-white rounded-2xl shadow-sm p-6 mb-4">
+      <h3 class="font-semibold text-gray-700 mb-3">📄 上传简历</h3>
+      <div class="drop-zone rounded-xl p-8 text-center cursor-pointer" id="drop-zone">
+        <div class="text-4xl mb-2" id="file-icon">📁</div>
+        <p class="text-gray-500 text-sm mb-1" id="file-label">拖拽简历文件到此处，或点击上传</p>
+        <p class="text-gray-300 text-xs">支持 PDF / Word (.docx) 格式</p>
+        <input type="file" id="file-input" accept=".pdf,.docx,.doc" class="hidden">
+      </div>
+      <div id="file-preview" class="hidden mt-3 bg-indigo-50 rounded-lg p-3 flex items-center justify-between">
+        <div>
+          <span class="text-sm font-medium text-indigo-700" id="file-name"></span>
+          <span class="text-xs text-indigo-400 ml-2" id="file-size"></span>
+        </div>
+        <button onclick="removeFile()" class="text-indigo-400 hover:text-indigo-600 text-sm">✕</button>
+      </div>
+      <p id="file-error" class="text-red-500 text-xs mt-2 hidden"></p>
+    </div>
+
+    <div class="bg-white rounded-2xl shadow-sm p-6 mb-4">
+      <h3 class="font-semibold text-gray-700 mb-3">🎯 目标职位信息</h3>
+      <input type="text" id="job-title-input" placeholder="职位名称（如：高级前端工程师）" maxlength="50"
+        class="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm mb-3 focus:outline-none focus:border-indigo-500"
+        value="${escapeHtml(state.jobTitle)}">
+      <textarea id="jd-input" placeholder="粘贴职位描述（JD）即岗位要求&#10;包括：任职要求、岗位职责、技能要求等&#10;越详细，AI的匹配分析越精准" rows="6" maxlength="10000"
+        class="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm focus:outline-none focus:border-indigo-500 resize-none"
+      >${escapeHtml(state.jdText)}</textarea>
+      <p class="text-xs text-gray-400 text-right"><span id="jd-count">0</span>/10000</p>
+    </div>
+
+    <button onclick="startAnalysis()" class="btn-primary w-full text-center text-base py-3" id="btn-start" disabled>
+      开始分析
+    </button>
+    <p id="btn-hint" class="text-center text-xs text-gray-400 mt-2">请先上传简历并填写职位描述</p>
+  `;
+
+  // Bind events
+  const dropZone = document.getElementById('drop-zone');
+  const fileInput = document.getElementById('file-input');
+  const jobTitleInput = document.getElementById('job-title-input');
+  const jdInput = document.getElementById('jd-input');
+  const jdCount = document.getElementById('jd-count');
+
+  dropZone.addEventListener('click', () => fileInput.click());
+  dropZone.addEventListener('dragover', e => { e.preventDefault(); dropZone.classList.add('drag-over'); });
+  dropZone.addEventListener('dragleave', () => dropZone.classList.remove('drag-over'));
+  dropZone.addEventListener('drop', e => { e.preventDefault(); dropZone.classList.remove('drag-over'); handleFile(e.dataTransfer.files[0]); });
+  fileInput.addEventListener('change', e => { if (e.target.files[0]) handleFile(e.target.files[0]); });
+
+  jobTitleInput.addEventListener('input', () => {
+    state.jobTitle = jobTitleInput.value.trim();
+    updateStartButton();
+  });
+  jdInput.addEventListener('input', () => {
+    state.jdText = jdInput.value;
+    jdCount.textContent = state.jdText.length;
+    updateStartButton();
+  });
+  jdCount.textContent = state.jdText.length;
+
+  updateStartButton();
+  document.getElementById('screen-upload').classList.remove('hidden');
+}
+
+async function handleFile(file) {
+  const ext = file.name.split('.').pop().toLowerCase();
+  if (!['pdf', 'docx', 'doc'].includes(ext)) {
+    showFileError('请上传 PDF 或 Word (.docx) 格式的文件');
+    return;
+  }
+  if (file.size > 10 * 1024 * 1024) {
+    showFileError('文件大小不能超过 10MB');
+    return;
+  }
+
+  state.resumeFile = file;
+  document.getElementById('file-preview').classList.remove('hidden');
+  document.getElementById('file-name').textContent = file.name;
+  document.getElementById('file-size').textContent = (file.size / 1024).toFixed(0) + ' KB';
+  document.getElementById('file-icon').textContent = '📋';
+  document.getElementById('file-label').textContent = '正在解析文件...';
+  document.getElementById('file-error').classList.add('hidden');
+
+  try {
+    const text = await parseFile(file);
+    if (!text || text.length < 50) {
+      throw new Error('未能从文件中提取到足够文字，文件可能为图片或加密文件');
+    }
+    state.resumeText = text;
+    document.getElementById('file-label').textContent = `解析完成 · ${text.length} 字符`;
+    document.getElementById('file-icon').textContent = '✅';
+    updateStartButton();
+  } catch (err) {
+    showFileError(err.message);
+    document.getElementById('file-label').textContent = '拖拽简历文件到此处，或点击上传';
+    document.getElementById('file-icon').textContent = '📁';
+    state.resumeText = null;
+  }
+}
+
+function showFileError(msg) {
+  const el = document.getElementById('file-error');
+  if (el) { el.textContent = msg; el.classList.remove('hidden'); }
+}
+
+function removeFile() {
+  state.resumeFile = null;
+  state.resumeText = null;
+  document.getElementById('file-preview').classList.add('hidden');
+  document.getElementById('file-icon').textContent = '📁';
+  document.getElementById('file-label').textContent = '拖拽简历文件到此处，或点击上传';
+  document.getElementById('file-error').classList.add('hidden');
+  document.getElementById('file-input').value = '';
+  updateStartButton();
+}
+
+function updateStartButton() {
+  const btn = document.getElementById('btn-start');
+  const hint = document.getElementById('btn-hint');
+  if (state.resumeText && state.jdText.trim().length >= 20) {
+    if (btn) btn.disabled = false;
+    if (hint) hint.classList.add('hidden');
+  } else {
+    if (btn) btn.disabled = true;
+    if (hint) hint.classList.remove('hidden');
+  }
+}
+
+// ============ RENDER: LOADING ============
+function renderLoading() {
+  const el = document.getElementById('screen-loading');
+  el.classList.remove('hidden');
+  el.innerHTML = `
+    <div class="bg-white rounded-2xl shadow-sm p-12 text-center">
+      <div class="w-16 h-16 mx-auto mb-6 border-4 border-indigo-100 border-t-indigo-600 rounded-full" style="animation: spin 1s linear infinite;"></div>
+      <h3 class="text-lg font-semibold text-gray-700 mb-4">AI正在分析您的简历...</h3>
+      <div class="space-y-2 text-sm text-gray-500">
+        <div class="pulse-dot">📋 解析职位要求</div>
+        <div class="pulse-dot">🔍 匹配度分析</div>
+        <div class="pulse-dot">✏️ 生成优化建议</div>
+        <div class="pulse-dot">📝 输出优化简历</div>
+      </div>
+      <p class="text-xs text-gray-400 mt-4">预计等待 5-15 秒</p>
+    </div>
+  `;
+  el.classList.remove('hidden');
+}
+
+// ============ START ANALYSIS ============
+async function startAnalysis() {
+  if (!state.resumeText || state.jdText.trim().length < 20) return;
+  state.error = null;
+  setScreen('loading');
+
+  try {
+    state.analysis = await analyzeResume();
+    state.unlocked = false;
+    setScreen('preview');
+  } catch (err) {
+    state.error = err.message || '分析失败，请稍后重试';
+    state.analysis = null;
+    setScreen('upload');
+    showUploadError(state.error);
+  }
+}
+
+function showUploadError(msg) {
+  const el = document.getElementById('screen-upload');
+  const existing = el.querySelector('.error-toast');
+  if (existing) existing.remove();
+  const toast = document.createElement('div');
+  toast.className = 'error-toast bg-red-50 text-red-600 rounded-xl p-4 text-sm text-center mt-4';
+  toast.innerHTML = `<p>${escapeHtml(msg)}</p><button onclick="this.parentElement.remove()" class="text-red-400 mt-1 underline">关闭</button>`;
+  el.appendChild(toast);
+}
+
+// ============ RENDER: RESULTS ============
+function renderResults() {
+  const { analysis, unlocked } = state;
+  if (!analysis) return;
+
+  const el = document.getElementById('screen-results');
+  el.classList.remove('hidden');
+
+  const score = analysis.overall_score;
+  const dim = analysis.dimension_scores;
+  const scoreLabel = score >= 80 ? '高度匹配' : score >= 60 ? '基本匹配' : score >= 40 ? '部分匹配' : '差距较大';
+  const scoreColor = score >= 80 ? '#10b981' : score >= 60 ? '#f59e0b' : score >= 40 ? '#f97316' : '#ef4444';
+
+  el.innerHTML = `
+    <!-- Score Card -->
+    <div class="bg-white rounded-2xl shadow-sm p-6 mb-4 text-center">
+      <p class="text-sm text-gray-500 mb-2">综合匹配度</p>
+      <div class="inline-flex items-center justify-center relative mb-2">
+        <svg width="140" height="140" class="score-ring">
+          <circle cx="70" cy="70" r="60" fill="none" stroke="#e5e7eb" stroke-width="10"/>
+          <circle cx="70" cy="70" r="60" fill="none" stroke="${scoreColor}" stroke-width="10"
+            stroke-dasharray="${2 * Math.PI * 60}" stroke-dashoffset="${2 * Math.PI * 60 * (1 - score / 100)}"
+            stroke-linecap="round"/>
+        </svg>
+        <span class="absolute text-4xl font-bold" style="color:${scoreColor}">${score}</span>
+      </div>
+      <p class="text-lg font-semibold" style="color:${scoreColor}">${scoreLabel}</p>
+    </div>
+
+    <!-- Radar Chart -->
+    <div class="bg-white rounded-2xl shadow-sm p-6 mb-4">
+      <h3 class="font-semibold text-gray-700 mb-4">📊 维度分析</h3>
+      <div class="mx-auto" style="max-width:320px">
+        <canvas id="radar-chart"></canvas>
+      </div>
+    </div>
+
+    <!-- Keywords -->
+    <div class="bg-white rounded-2xl shadow-sm p-6 mb-4">
+      <h3 class="font-semibold text-gray-700 mb-3">🏷️ 关键词匹配</h3>
+      <p class="text-xs text-gray-400 mb-3">已匹配 <span class="text-green-600 font-medium">${analysis.matched_keywords.length}</span> 个，缺失 <span class="text-red-500 font-medium">${analysis.missing_keywords.length}</span> 个</p>
+      <div class="mb-3">
+        <p class="text-xs text-gray-400 mb-1">✅ 已覆盖</p>
+        <div>${analysis.matched_keywords.map(k => `<span class="tag tag-match">${escapeHtml(k)}</span>`).join('')}</div>
+      </div>
+      <div>
+        <p class="text-xs text-gray-400 mb-1">❌ 缺失</p>
+        <div>${analysis.missing_keywords.map(k => `<span class="tag tag-miss">${escapeHtml(k)}</span>`).join('')}</div>
+      </div>
+    </div>
+
+    <!-- Gap Analysis -->
+    <div class="bg-white rounded-2xl shadow-sm p-6 mb-4">
+      <h3 class="font-semibold text-gray-700 mb-3">🔍 差距分析</h3>
+      <div class="space-y-3">
+        ${analysis.gap_analysis.map((g, i) => `
+          <div class="rounded-lg p-3 bg-gray-50 gap-severity-${g.severity}">
+            <div class="flex items-center gap-2 mb-1">
+              <span class="text-xs px-2 py-0.5 rounded-full font-medium ${g.severity === 'high' ? 'bg-red-100 text-red-700' : g.severity === 'medium' ? 'bg-yellow-100 text-yellow-700' : 'bg-blue-100 text-blue-700'}">${g.severity === 'high' ? '严重' : g.severity === 'medium' ? '中等' : '轻微'}</span>
+              <span class="text-sm font-medium text-gray-700">${escapeHtml(g.gap)}</span>
+            </div>
+            <p class="text-xs text-gray-500 ml-1">💡 ${escapeHtml(g.suggestion)}</p>
+          </div>
+        `).join('')}
+      </div>
+    </div>
+
+    <!-- Rewritten Sections -->
+    <div class="bg-white rounded-2xl shadow-sm p-6 mb-4">
+      <h3 class="font-semibold text-gray-700 mb-3">✏️ 逐模块优化改写</h3>
+      ${analysis.rewritten_sections.map((s, i) => {
+        const isFree = i === 0;
+        const isUnlocked = unlocked || isFree;
+        return `
+          <div class="section-card ${isUnlocked ? '' : 'paywall-blur'}" id="section-${i}">
+            <h4 class="font-medium text-gray-800 mb-2">${escapeHtml(s.section_name)}</h4>
+            <div class="text-xs text-gray-400 mb-2 line-through">${escapeHtml(s.original).substring(0, isUnlocked ? s.original.length : 100)}...</div>
+            <div class="text-sm text-gray-700 whitespace-pre-wrap border-l-2 border-indigo-400 pl-3">${escapeHtml(s.rewritten).substring(0, isUnlocked ? s.rewritten.length : 80)}...</div>
+            <div class="text-xs text-indigo-500 mt-2">📌 修改理由：${escapeHtml(s.change_reason).substring(0, isUnlocked ? s.change_reason.length : 60)}...</div>
+            ${!isUnlocked ? `<div class="paywall-overlay" onclick="openPaymentModal()">
+              <div>🔒</div>
+              <div class="text-sm font-medium text-indigo-600 mt-1">支付 ¥9.9 解锁</div>
+              <div class="text-xs text-gray-400">查看完整改写建议</div>
+            </div>` : ''}
+          </div>
+        `;
+      }).join('')}
+    </div>
+
+    <!-- Optimized Resume Preview -->
+    <div class="bg-white rounded-2xl shadow-sm p-6 mb-4">
+      <h3 class="font-semibold text-gray-700 mb-3">📝 优化后完整简历</h3>
+      <div class="${unlocked ? '' : 'paywall-blur'}" id="resume-preview">
+        <div class="text-sm text-gray-700 whitespace-pre-wrap leading-relaxed p-4 bg-gray-50 rounded-lg">
+          ${escapeHtml(analysis.optimized_resume).substring(0, unlocked ? analysis.optimized_resume.length : 300)}...
+        </div>
+      </div>
+      ${!unlocked ? `
+        <div class="relative text-center mt-2">
+          <div class="paywall-overlay static flex-row gap-2 py-3 cursor-pointer rounded-lg bg-indigo-50/80" onclick="openPaymentModal()">
+            <span>🔒</span>
+            <span class="text-sm font-medium text-indigo-600">支付 ¥9.9 解锁并下载完整简历</span>
+          </div>
+        </div>
+      ` : `
+        <button onclick="downloadResume()" class="btn-primary w-full text-center mt-3">📥 下载优化后简历</button>
+      `}
+    </div>
+
+    <!-- Paywall Banner -->
+    ${!unlocked ? `
+      <div class="sticky bottom-4 bg-white rounded-2xl shadow-lg p-4 border border-indigo-100 flex items-center justify-between">
+        <div>
+          <p class="font-semibold text-gray-800">¥9.9 解锁完整报告</p>
+          <p class="text-xs text-gray-400">含全部改写 + 可下载优化简历</p>
+        </div>
+        <button onclick="openPaymentModal()" class="btn-primary text-sm">立即解锁</button>
+      </div>
+    ` : ''}
+
+    <!-- Hidden print area -->
+    <div id="print-area" class="hidden">${unlocked ? escapeHtml(analysis.optimized_resume) : ''}</div>
+  `;
+
+  // Draw radar chart
+  setTimeout(() => {
+    const canvas = document.getElementById('radar-chart');
+    if (!canvas) return;
+    new Chart(canvas, {
+      type: 'radar',
+      data: {
+        labels: ['技能匹配', '经验匹配', '学历匹配', '综合素质'],
+        datasets: [{
+          label: '匹配度',
+          data: [dim.skills_match, dim.experience_match, dim.education_match, dim.comprehensive_quality],
+          backgroundColor: 'rgba(99, 102, 241, 0.15)',
+          borderColor: 'rgba(99, 102, 241, 0.8)',
+          borderWidth: 2,
+          pointBackgroundColor: '#6366f1',
+          pointRadius: 3,
+        }],
+      },
+      options: {
+        responsive: true,
+        scales: {
+          r: {
+            beginAtZero: true,
+            max: 100,
+            ticks: { stepSize: 20, font: { size: 10 } },
+            pointLabels: { font: { size: 12 } },
+          },
+        },
+        plugins: { legend: { display: false } },
+      },
+    });
+  }, 100);
+
+  el.classList.remove('hidden');
+}
+
+// ============ PAYWALL ============
+function openPaymentModal() {
+  document.getElementById('payment-modal').classList.remove('hidden');
+  document.getElementById('code-error').classList.add('hidden');
+  document.getElementById('code-input').value = '';
+  setTimeout(() => document.getElementById('code-input').focus(), 100);
+}
+
+function closePaymentModal() {
+  document.getElementById('payment-modal').classList.add('hidden');
+}
+
+async function verifyCode() {
+  const input = document.getElementById('code-input');
+  const btn = document.getElementById('btn-verify');
+  const errorEl = document.getElementById('code-error');
+  const code = input.value.trim().toUpperCase();
+
+  if (code.length < 6) {
+    errorEl.textContent = '请输入有效的验证码';
+    errorEl.classList.remove('hidden');
+    return;
+  }
+
+  btn.disabled = true;
+  btn.textContent = '验证中...';
+  errorEl.classList.add('hidden');
+
+  try {
+    const result = await verifyCodeAPI(code);
+    if (result.valid) {
+      state.unlocked = true;
+      state.verifiedCode = code;
+      localStorage.setItem('resume_unlock_code', code);
+      closePaymentModal();
+      setScreen('unlocked');
+    } else {
+      errorEl.textContent = result.message || '验证码无效';
+      errorEl.classList.remove('hidden');
+    }
+  } catch (err) {
+    errorEl.textContent = '验证失败，请稍后重试';
+    errorEl.classList.remove('hidden');
+  } finally {
+    btn.disabled = false;
+    btn.textContent = '验证解锁';
+  }
+}
+
+// ============ DOWNLOAD ============
+function downloadResume() {
+  const analysis = state.analysis;
+  if (!analysis) return;
+
+  const w = window.open('', '_blank');
+  w.document.write(`
+    <!DOCTYPE html>
+    <html lang="zh-CN">
+    <head>
+      <meta charset="UTF-8">
+      <title>优化后简历</title>
+      <style>
+        @page { size: A4; margin: 20mm; }
+        body { font-family: "PingFang SC", "Microsoft YaHei", sans-serif; font-size: 14px; line-height: 1.8; color: #333; max-width: 210mm; margin: 0 auto; padding: 20mm; }
+        h1 { text-align: center; font-size: 22px; margin-bottom: 20px; }
+        h2 { font-size: 16px; border-bottom: 2px solid #333; padding-bottom: 4px; margin-top: 24px; }
+        p { margin: 4px 0; white-space: pre-wrap; }
+      </style>
+    </head>
+    <body>
+      <pre style="white-space: pre-wrap; font-family: inherit;">${escapeHtml(analysis.optimized_resume)}</pre>
+    </body>
+    </html>
+  `);
+  w.document.close();
+  setTimeout(() => w.print(), 500);
+}
+
+// ============ UTILS ============
+function escapeHtml(str) {
+  if (!str) return '';
+  return String(str).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;');
+}
+
+// ============ INIT ============
+function init() {
+  // Check for returning unlocked user
+  const savedCode = localStorage.getItem('resume_unlock_code');
+  if (savedCode) {
+    state.verifiedCode = savedCode;
+    // We don't auto-unlock past analyses, but user can re-analyze and use same code
+  }
+  setScreen('upload');
+
+  // Close modal on escape
+  document.addEventListener('keydown', e => {
+    if (e.key === 'Escape') closePaymentModal();
+  });
+}
+
+init();
+</script>
+
+<style>
+@keyframes spin {
+  to { transform: rotate(360deg); }
+}
+</style>
+</body>
+</html>

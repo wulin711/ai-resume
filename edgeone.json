@@ -1,0 +1,18 @@
+{
+  "name": "ai-resume-optimizer",
+  "nodeVersion": "22.11.0",
+  "cloudFunctions": {
+    "nodejs": {
+      "includeFiles": ["data/**"],
+      "maxDuration": 60
+    }
+  },
+  "headers": [
+    {
+      "source": "/assets/*",
+      "headers": [
+        { "key": "Cache-Control", "value": "max-age=31536000, immutable" }
+      ]
+    }
+  ]
+}
